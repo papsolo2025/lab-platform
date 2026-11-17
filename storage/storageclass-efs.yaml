@@ -1,0 +1,14 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: efs
+provisioner: efs.csi.aws.com
+parameters:
+  provisioningMode: efs-ap          # each PVC gets its own EFS access point (isolated directory)
+  fileSystemId: __EFS_ID__          # filled in by install-storage.sh
+  directoryPerms: "700"
+  uid: "10001"                      # files owned by the non-root user the pods run as
+  gid: "10001"
+  basePath: "/k8s"
+reclaimPolicy: Delete
+volumeBindingMode: Immediate        # EFS is regional: no need to wait for the pod's zone (unlike EBS)

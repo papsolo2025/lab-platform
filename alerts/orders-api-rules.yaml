@@ -1,0 +1,88 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: orders-api
+  namespace: monitoring
+spec:
+  groups:
+    - name: orders-api.recording
+      rules:
+        # Health-check endpoints are excluded: probes are not user traffic.
+        - record: orders:requests:rate5m
+          expr: sum by (namespace) (rate(http_requests_total{route!~"/health.*"}[5m]))
+        - record: orders:errors:rate5m
+          expr: sum by (namespace) (rate(http_requests_total{route!~"/health.*", status=~"5.."}[5m]))
+        - record: orders:error_ratio:rate5m
+          expr: orders:errors:rate5m / orders:requests:rate5m
+
+    - name: orders-api.alerts
+      rules:
+        - alert: OrdersApiDown
+          expr: absent(up{namespace="prod", service="orders-api"} == 1)
+          for: 3m
+          labels:
+            severity: critical
+          annotations:
+            summary: "orders-api has no healthy targets in prod"
+            description: "Prometheus cannot scrape any orders-api pod in prod for 3 minutes."
+            runbook_url: "https://github.com/papsolo2025/lab-ops/blob/main/runbooks/orders-api-down.md"
+
+        - alert: OrdersApiHighErrorRate
+          expr: orders:error_ratio:rate5m{namespace="prod"} > 0.05
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "orders-api 5xx error rate above 5% in prod"
+            description: "Current error ratio: {{ $value | humanizePercentage }}"
+            runbook_url: "https://github.com/papsolo2025/lab-ops/blob/main/runbooks/high-error-rate.md"
+
+        - alert: OrdersApiHighLatency
+          expr: |
+            histogram_quantile(0.95,
+              sum by (le) (rate(http_request_duration_seconds_bucket{namespace="prod", route!~"/health.*"}[5m]))
+            ) > 0.5
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "orders-api p95 latency above 500 ms in prod"
+            description: "p95 latency is {{ $value | humanizeDuration }}"
+            runbook_url: "https://github.com/papsolo2025/lab-ops/blob/main/runbooks/high-latency.md"
+
+        # SRE multi-window burn-rate alert for a 99.9% SLO:
+        # burning 14.4x faster than allowed uses 2% of the 30-day error budget in 1 hour.
+        - alert: OrdersApiErrorBudgetFastBurn
+          expr: |
+            (
+              sum(rate(http_requests_total{namespace="prod", route!~"/health.*", status=~"5.."}[1h]))
+              / sum(rate(http_requests_total{namespace="prod", route!~"/health.*"}[1h]))
+            ) > (14.4 * 0.001)
+            and
+            orders:error_ratio:rate5m{namespace="prod"} > (14.4 * 0.001)
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "orders-api is burning its error budget fast"
+            description: "At this rate the 30-day error budget is gone in about 2 days."
+            runbook_url: "https://github.com/papsolo2025/lab-ops/blob/main/runbooks/high-error-rate.md"
+
+        - alert: KubePodCrashLooping
+          expr: increase(kube_pod_container_status_restarts_total{namespace=~"dev|staging|prod"}[15m]) > 3
+          labels:
+            severity: warning
+          annotations:
+            summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} is restarting repeatedly"
+            description: "{{ $value | humanize }} restarts in 15 minutes."
+            runbook_url: "https://github.com/papsolo2025/lab-ops/blob/main/runbooks/crashloop.md"
+
+        - alert: OrdersExportJobFailed
+          expr: kube_job_status_failed{namespace=~"dev|staging|prod", job_name=~"orders-api-export.*"} > 0
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Orders export job {{ $labels.namespace }}/{{ $labels.job_name }} failed"
+            description: "The daily S3 export did not complete - downstream summaries will be missing."
+            runbook_url: "https://github.com/papsolo2025/lab-ops/blob/main/runbooks/lambda-errors.md"

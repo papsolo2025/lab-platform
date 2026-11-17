@@ -1,0 +1,62 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: ec2-servers
+  namespace: monitoring
+spec:
+  groups:
+    - name: ec2-servers.alerts
+      rules:
+        - alert: Ec2InstanceDown
+          expr: up{job="ec2-node-exporter"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "{{ $labels.name }} is down (node_exporter not reachable)"
+            description: "No metrics from {{ $labels.name }} ({{ $labels.instance }}) for 5 minutes."
+            runbook_url: "https://github.com/papsolo2025/lab-ops/blob/main/runbooks/instance-down.md"
+
+        - alert: Ec2DiskUsageHigh
+          expr: |
+            100 * (1 - node_filesystem_avail_bytes{job="ec2-node-exporter", mountpoint="/"}
+                     / node_filesystem_size_bytes{job="ec2-node-exporter", mountpoint="/"}) > 85
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Disk above 85% on {{ $labels.name }}"
+            description: "Root filesystem is {{ $value | humanize }}% full."
+            runbook_url: "https://github.com/papsolo2025/lab-ops/blob/main/runbooks/disk-full.md"
+
+        - alert: Ec2DiskWillFillIn24h
+          expr: |
+            predict_linear(node_filesystem_avail_bytes{job="ec2-node-exporter", mountpoint="/"}[6h], 24 * 3600) < 0
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Disk on {{ $labels.name }} will be full within 24 hours"
+            description: "Based on the last 6 hours of growth."
+            runbook_url: "https://github.com/papsolo2025/lab-ops/blob/main/runbooks/disk-full.md"
+
+        - alert: Ec2HighCpu
+          expr: |
+            100 - (avg by (name) (rate(node_cpu_seconds_total{job="ec2-node-exporter", mode="idle"}[5m])) * 100) > 90
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "CPU above 90% on {{ $labels.name }} for 15 minutes"
+            description: "Current CPU usage {{ $value | humanize }}%."
+
+        - alert: Ec2MemoryHigh
+          expr: |
+            100 * (1 - node_memory_MemAvailable_bytes{job="ec2-node-exporter"}
+                     / node_memory_MemTotal_bytes{job="ec2-node-exporter"}) > 90
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Memory above 90% on {{ $labels.name }}"
+            description: "Current memory usage {{ $value | humanize }}%."

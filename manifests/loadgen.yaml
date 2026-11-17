@@ -1,0 +1,51 @@
+# Sends steady traffic to prod orders-api so dashboards, alerts and SLO reports have real data.
+# Scale to 0 to pause:  kubectl -n loadgen scale deploy/loadgen --replicas=0
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loadgen
+  namespace: loadgen
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: loadgen
+  template:
+    metadata:
+      labels:
+        app: loadgen
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: loadgen
+          image: curlimages/curl:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              URL=http://orders-api.prod.svc.cluster.local
+              i=0
+              while true; do
+                curl -s -o /dev/null "$URL/orders"
+                curl -s -o /dev/null "$URL/"
+                if [ $((i % 10)) -eq 0 ]; then
+                  curl -s -o /dev/null -X POST -H 'Content-Type: application/json' \
+                    -d '{"item":"widget","quantity":1}' "$URL/orders"
+                fi
+                i=$((i + 1))
+                sleep 1
+              done
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 32Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

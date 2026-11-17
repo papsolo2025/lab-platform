@@ -1,0 +1,100 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: storage-demo
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: shared
+  namespace: storage-demo
+spec:
+  accessModes: ["ReadWriteMany"]     # many pods, many nodes, many AZs - EBS cannot do this
+  storageClassName: efs
+  resources:
+    requests:
+      storage: 5Gi                   # required by Kubernetes; EFS itself is elastic and ignores it
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: writer
+  namespace: storage-demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: writer }
+  template:
+    metadata:
+      labels: { app: writer }
+    spec:
+      # Force the two writers into different Availability Zones
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels: { app: writer }
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: writer
+          image: public.ecr.aws/docker/library/busybox:stable
+          command: ["sh", "-c"]
+          args:
+            - while true; do echo "$(date -u +%T) written by $HOSTNAME on node $NODE" >> /data/shared.log; sleep 10; done
+          env:
+            - name: NODE
+              valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
+          resources:
+            requests: { cpu: 5m, memory: 8Mi }
+            limits: { memory: 16Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: shared, mountPath: /data }
+      volumes:
+        - name: shared
+          persistentVolumeClaim: { claimName: shared }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: reader
+  namespace: storage-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: reader }
+  template:
+    metadata:
+      labels: { app: reader }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: reader
+          image: public.ecr.aws/docker/library/busybox:stable
+          command: ["sh", "-c", "touch /data/shared.log; tail -F /data/shared.log"]
+          resources:
+            requests: { cpu: 5m, memory: 8Mi }
+            limits: { memory: 16Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: shared, mountPath: /data, readOnly: true }
+      volumes:
+        - name: shared
+          persistentVolumeClaim: { claimName: shared }
