@@ -15,7 +15,7 @@ spec:
           annotations:
             summary: "{{ $labels.name }} is down (node_exporter not reachable)"
             description: "No metrics from {{ $labels.name }} ({{ $labels.instance }}) for 5 minutes."
-            runbook_url: "https://github.com/papsolo2025/lab-ops/blob/main/runbooks/instance-down.md"
+            runbook_url: "https://github.com/YOUR_GITHUB_USER/lab-ops/blob/main/runbooks/instance-down.md"
 
         - alert: Ec2DiskUsageHigh
           expr: |
@@ -27,7 +27,7 @@ spec:
           annotations:
             summary: "Disk above 85% on {{ $labels.name }}"
             description: "Root filesystem is {{ $value | humanize }}% full."
-            runbook_url: "https://github.com/papsolo2025/lab-ops/blob/main/runbooks/disk-full.md"
+            runbook_url: "https://github.com/YOUR_GITHUB_USER/lab-ops/blob/main/runbooks/disk-full.md"
 
         - alert: Ec2DiskWillFillIn24h
           expr: |
@@ -38,7 +38,7 @@ spec:
           annotations:
             summary: "Disk on {{ $labels.name }} will be full within 24 hours"
             description: "Based on the last 6 hours of growth."
-            runbook_url: "https://github.com/papsolo2025/lab-ops/blob/main/runbooks/disk-full.md"
+            runbook_url: "https://github.com/YOUR_GITHUB_USER/lab-ops/blob/main/runbooks/disk-full.md"
 
         - alert: Ec2HighCpu
           expr: |

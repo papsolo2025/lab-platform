@@ -1,0 +1,128 @@
+# Least-privilege Kubernetes access for Jenkins.
+# The EKS access entry (lab-terraform/envs/lab/eks.tf) maps the Jenkins IAM role to the group
+# "jenkins-deployers". This file decides what that group may do - nothing more:
+#   1. edit in dev, staging and prod   (helm deploys, exec smoke tests, rollout restarts, DB secrets)
+#   2. read-only view of the cluster   (nodes, pods in all namespaces, metrics) for health/capacity jobs
+#   3. query Prometheus via the API server proxy in "monitoring"
+# It cannot touch kube-system, change RBAC, create namespaces, or delete nodes.
+---
+# The built-in "edit" role doesn't include Prometheus Operator CRDs. This label aggregates
+# ServiceMonitor/PodMonitor/PrometheusRule into "edit", so the app chart's ServiceMonitor deploys.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: lab-monitoring-crds-edit
+  labels:
+    rbac.authorization.k8s.io/aggregate-to-edit: "true"
+rules:
+  - apiGroups: ["monitoring.coreos.com"]
+    resources: ["servicemonitors", "podmonitors", "prometheusrules"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+# Cluster-scoped reads that "view" doesn't cover (nodes are not namespaced).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: lab-cluster-reader
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "namespaces"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["nodes", "pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: jenkins-deployers-view
+subjects:
+  - kind: Group
+    name: jenkins-deployers
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: view
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: jenkins-deployers-cluster-reader
+subjects:
+  - kind: Group
+    name: jenkins-deployers
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: lab-cluster-reader
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: jenkins-deployers-edit
+  namespace: dev
+subjects:
+  - kind: Group
+    name: jenkins-deployers
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: edit
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: jenkins-deployers-edit
+  namespace: staging
+subjects:
+  - kind: Group
+    name: jenkins-deployers
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: edit
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: jenkins-deployers-edit
+  namespace: prod
+subjects:
+  - kind: Group
+    name: jenkins-deployers
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: edit
+  apiGroup: rbac.authorization.k8s.io
+---
+# PromQL from ops jobs goes through the API server proxy to the Prometheus service.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: prometheus-query
+  namespace: monitoring
+rules:
+  - apiGroups: [""]
+    resources: ["services/proxy"]
+    # The name in the proxy URL includes the port, so both forms are listed.
+    resourceNames: ["monitoring-kube-prometheus-prometheus", "monitoring-kube-prometheus-prometheus:9090"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: jenkins-deployers-prometheus-query
+  namespace: monitoring
+subjects:
+  - kind: Group
+    name: jenkins-deployers
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: prometheus-query
+  apiGroup: rbac.authorization.k8s.io
