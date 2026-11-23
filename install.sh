@@ -77,6 +77,9 @@ helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
 echo "==> Alert rules"
 kubectl apply -f alerts/
 
+echo "==> Jenkins RBAC (least privilege for the jenkins-deployers group)"
+kubectl apply -f manifests/jenkins-rbac.yaml
+
 echo "==> Traffic generator (gives Prometheus real data for SLOs)"
 kubectl apply -f manifests/loadgen.yaml
 
